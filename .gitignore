@@ -1,4 +1,24 @@
+# Python
 __pycache__/
-archive/
-.omx/
-.clawd-agents/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Generated files (optional - commit these)
+# *.json
+# *.sh
+
+# Logs
+*.log
