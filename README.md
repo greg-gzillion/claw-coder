@@ -106,3 +106,8 @@ MIT
 - **Repository**: https://github.com/greg-gzillion/claw-coder
 - **TX Project**: `/home/greg/dev/TX`
 - **TX Documentation**: `/home/greg/dev/TXdocumentation`
+
+## Related Repositories
+
+- **[TX](https://github.com/greg-gzillion/TX)** - PhoenixPME auction implementation (what this agent validates)
+- **[TXdocumentation](https://github.com/greg-gzillion/TXdocumentation)** - Source of truth for blockchain rules
