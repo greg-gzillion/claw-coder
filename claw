@@ -10,67 +10,53 @@ from groq import Groq
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-def ask_with_context(question):
-    """Ask AI with relevant code context"""
+def read_file(filepath):
+    """Read a file and return its contents"""
+    full_path = f"/home/greg/dev/TX/{filepath}"
+    if os.path.exists(full_path):
+        with open(full_path, 'r') as f:
+            return f.read()
+    return None
+
+def ask_ai(question):
     if not client:
-        return "Set GROQ_API_KEY for fast responses"
+        return "ERROR: GROQ_API_KEY not set. Run: export GROQ_API_KEY='your-key'"
     
-    # Always include escrow.rs for collateral questions
-    context_files = []
-    
-    # Find relevant files based on question keywords
-    keywords = question.lower().split()
-    for kw in keywords:
-        if kw in ['collateral', 'escrow', 'dual', 'lock']:
-            if os.path.exists('/home/greg/dev/TX/escrow.rs'):
-                context_files.append('/home/greg/dev/TX/escrow.rs')
-            if os.path.exists('/home/greg/dev/TX/tests/generated_tests.rs'):
-                context_files.append('/home/greg/dev/TX/tests/generated_tests.rs')
-            break
-    
-    # If no specific files found, search for relevant ones
-    if not context_files:
-        for kw in keywords[:2]:
-            result = subprocess.run(f"grep -l '{kw}' /home/greg/dev/TX/*.rs 2>/dev/null | head -1",
-                                   shell=True, capture_output=True, text=True)
-            if result.stdout.strip():
-                context_files.append(result.stdout.strip())
-    
-    # Build context from files
+    # Check if question asks about a specific file
     context = ""
-    for filepath in context_files[:2]:
-        if filepath and os.path.exists(filepath):
-            with open(filepath, 'r') as f:
-                content = f.read()
-                # Get relevant sections (around keywords)
-                lines = content.split('\n')
-                relevant_lines = []
-                for i, line in enumerate(lines):
-                    for kw in keywords[:2]:
-                        if kw in line.lower():
-                            start = max(0, i-5)
-                            end = min(len(lines), i+6)
-                            relevant_lines.extend(lines[start:end])
-                            break
-                    if len(relevant_lines) > 50:
-                        break
-                
-                if relevant_lines:
-                    context += f"\n=== {os.path.basename(filepath)} ===\n"
-                    context += '\n'.join(relevant_lines[:60])
-                    context += "\n"
+    file_patterns = {
+        'VISION.md': ['vision', 'VISION.md'],
+        'README.md': ['readme', 'README'],
+        'CLAW.md': ['claw', 'CLAW'],
+        'escrow.rs': ['escrow'],
+    }
     
-    # If no context found, provide basic info
-    if not context:
-        context = "PhoenixPME escrow system with 10% collateral from both parties."
+    for filename, keywords in file_patterns.items():
+        if any(kw in question.lower() for kw in keywords):
+            content = read_file(filename)
+            if content:
+                context += f"\n=== {filename} ===\n{content[:3000]}\n"
+                break
     
-    prompt = f"""You are a PhoenixPME blockchain expert. Use this code context:
+    # Also try to extract filename from question
+    words = question.split()
+    for word in words:
+        if word.endswith('.md') or word.endswith('.rs'):
+            content = read_file(word)
+            if content:
+                context += f"\n=== {word} ===\n{content[:3000]}\n"
+                break
+    
+    if context:
+        prompt = f"""You are a PhoenixPME blockchain expert. Here is the actual file content:
 
 {context}
 
 Question: {question}
 
-Answer based on the actual code above. Be specific - mention actual values like 10%, 1.1%, 48 hours, and reference the actual functions seen in the code."""
+Answer based ONLY on the file content above. Be specific and quote from the file."""
+    else:
+        prompt = question
     
     try:
         completion = client.chat.completions.create(
@@ -83,17 +69,21 @@ Answer based on the actual code above. Be specific - mention actual values like 
         return f"API Error: {e}"
 
 def search_project(term):
-    """Search TX project for term"""
-    cmd = f"grep -rn '{term}' /home/greg/dev/TX --include='*.rs' --include='*.md' 2>/dev/null | head -25"
+    term = term.strip('"\'')
+    cmd = f"grep -rn '{term}' /home/greg/dev/TX --include='*.rs' --include='*.md' --include='*.txt' 2>/dev/null | head -30"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    return result.stdout if result.stdout else f"No results found for '{term}'"
+    
+    if result.stdout:
+        return result.stdout
+    else:
+        return f"No results found for: {term}"
 
 print("\n" + "="*50)
 print("🦞 CLAW - PhoenixPME AI Assistant")
 if GROQ_API_KEY:
-    print("🚀 FAST MODE (Groq) - 1-2 second responses")
+    print("FAST MODE (Groq) - 1-2 second responses")
 else:
-    print("⚠️  Set GROQ_API_KEY for fast responses")
+    print("SLOW MODE - Set GROQ_API_KEY for fast responses")
 print("="*50)
 print("Commands: ask | search | status | token | exit")
 print("="*50)
@@ -103,28 +93,34 @@ while True:
         cmd = input("\n🦞 ").strip()
         if not cmd:
             continue
+        
         if cmd == "exit":
             break
         elif cmd == "status":
-            print("\n🏛️ PHOENIXPME")
-            print("  Fee: 1.1%")
-            print("  Collateral: 10% (both parties)")
+            print("\nPHOENIXPME")
+            print("  Fee: 1.1% -> PHNX tokens")
+            print("  Collateral: 10% from both parties")
             print("  Inspection: 48 hours")
-            print("  PHNX: 1 per $1 TESTUSD fees")
+            print("  Token: TESTUSD on Coreum testnet")
         elif cmd == "token":
-            print("\n🪙 TESTUSD Token")
+            print("\nTESTUSD Token")
             print("  Network: Coreum testnet")
-            print("  Denom: utestusd-testcore1tymxlev27p5rhxd36g4j3a82c7uucjjz4xuzc6")
             print("  Decimals: 6")
         elif cmd.startswith("ask "):
-            print("🤔 Thinking...")
-            answer = ask_with_context(cmd[4:])
+            question = cmd[4:]
+            print("Thinking...")
+            answer = ask_ai(question)
             print(f"\n{answer}\n")
         elif cmd.startswith("search "):
-            print(search_project(cmd[7:]))
+            term = cmd[7:]
+            print(search_project(term))
         else:
             print("Commands: ask <question> | search <term> | status | token | exit")
+            
     except KeyboardInterrupt:
+        print("\nGoodbye!")
         break
+    except Exception as e:
+        print(f"Error: {e}")
 
-print("\nGoodbye!")
+print("Goodbye!")
