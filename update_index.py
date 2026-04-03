@@ -58,3 +58,43 @@ print(f"\n✅ Indexing complete!")
 print(f"   📁 Docs indexed: {doc_count}")
 print(f"   📊 File types found: {dict(list(file_types.items())[:10])}")
 print(f"   📚 Total docs: {index['stats']['doc_files']}")
+
+# Also index CosmWasm book
+book_path = Path("/home/greg/dev/cosmwasm-book")
+if book_path.exists():
+    print("📚 Indexing CosmWasm book...")
+    for filepath in book_path.rglob("*.md"):
+        if filepath.is_file():
+            try:
+                with open(filepath, 'r') as f:
+                    content = f.read()
+                    index["docs"][str(filepath)] = {
+                        "type": "cosmwasm_book",
+                        "lines": len(content.split('\n')),
+                        "size": len(content)
+                    }
+                    doc_count += 1
+            except:
+                pass
+
+# Index Rust standard library documentation
+rust_path = Path("/home/greg/dev/rust-stdlib/library/std")
+if rust_path.exists():
+    print("📚 Indexing Rust standard library...")
+    for filepath in rust_path.rglob("*.rs"):
+        if filepath.is_file() and filepath.stat().st_size < 100000:
+            try:
+                with open(filepath, 'r') as f:
+                    content = f.read()
+                    # Only store doc comments and important parts
+                    if "///" in content or "//!" in content:
+                        index["docs"][str(filepath)] = {
+                            "type": "rust_stdlib",
+                            "lines": len(content.split('\n')),
+                            "size": len(content)
+                        }
+                        doc_count += 1
+                        if doc_count % 50 == 0:
+                            print(f"  Indexed {doc_count} Rust files...")
+            except:
+                pass
