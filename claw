@@ -591,3 +591,44 @@ while True:
         print(f"Error: {e}")
 
 print("Goodbye!")
+
+# ============ COSMWASM KNOWLEDGE BASE ============
+COSMWASM_CONTEXT = """
+🦀 COSMWASM + RUST KNOWLEDGE BASE
+
+ENTRY POINTS:
+  #[entry_point] fn instantiate()  - Contract deployment (called once)
+  #[entry_point] fn execute()       - State-changing operations (needs funds)
+  #[entry_point] fn query()         - Read-only operations (no gas)
+  #[entry_point] fn migrate()       - Contract upgrades
+  #[entry_point] fn reply()         - Handle SubMsg responses
+  #[entry_point] fn sudo()          - Privileged governance operations
+
+STORAGE PATTERNS:
+  Item<T>         - Single value storage
+  Map<K, V>       - Simple key-value store  
+  Bucket<K, V>    - Namespaced key-value store
+  SnapshotMap<K,V>- Map with rollback capability
+
+COMMON TYPES:
+  Deps / DepsMut  - Dependencies (storage, api, querier)
+  Env             - Blockchain environment (block time, height)
+  MessageInfo     - Sender address + funds sent
+  Response        - Contract execution result
+  SubMsg          - Execute another contract + handle reply
+  CosmosMsg       - Raw blockchain messages (bank, staking, wasm)
+
+ERROR HANDLING:
+  StdResult<T>    - Standard CosmWasm result
+  ContractError   - Custom error enum
+  anyhow::Error   - For complex error chains
+  
+SECURITY PATTERNS:
+  - CW1/Whitelist for authorization
+  - CW20 for fungible tokens
+  - CW721 for NFTs
+  - cw-multi-test for integration testing
+"""
+
+elif cmd == "cosmwasm":
+    print(COSMWASM_CONTEXT)
