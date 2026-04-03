@@ -16,3 +16,26 @@ __pycache__/
 Thumbs.db
 *.backup
 *_conversation.json
+
+# Documentation
+docs/
+knowledge_base/
+*.html
+*.md
+!README.md
+!PORTING_STATUS.md
+
+# Scripts
+scripts/agents/
+*.sh
+!install.sh
+
+# Databases
+*.db
+*.jsonl
+metrics_history.jsonl
+
+# Backup
+*.backup
+*.broken
+*_conversation.json
