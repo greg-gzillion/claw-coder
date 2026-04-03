@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """
 🦞 CLAW - PhoenixPME AI Assistant
+Ported features from claw-code: Tools, Permissions, Git integration, Web search
 """
 
 import os
 import subprocess
 import json
 import glob
+import re
 from datetime import datetime
 from groq import Groq
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-# Session management
+# ============ CONFIGURATION ============
+PROJECT_ROOT = "/home/greg/dev/TX"
+PERMISSION_MODE = "read-only"  # read-only, workspace-write, full
+CURRENT_MODEL = "llama-3.3-70b-versatile"
+
+# ============ SESSION MANAGEMENT ============
 SESSION_DIR = os.path.expanduser("~/.claw_sessions")
 os.makedirs(SESSION_DIR, exist_ok=True)
 current_session = None
@@ -29,7 +36,8 @@ def session_new(name=None):
         "created": datetime.now().isoformat(),
         "conversations": [],
         "total_cost": 0,
-        "total_tokens": 0
+        "total_tokens": 0,
+        "permission_mode": PERMISSION_MODE
     }
     session_save()
     print(f"New session: {name}")
@@ -82,6 +90,71 @@ def session_export(filename=None):
         json.dump(session_data, f, indent=2)
     print(f"Exported to: {filename}")
 
+# ============ TOOLS (ported from claw-code) ============
+def tool_read(filepath):
+    """Read a file from the project"""
+    if PERMISSION_MODE == "read-only" or PERMISSION_MODE == "workspace-write" or PERMISSION_MODE == "full":
+        full_path = os.path.join(PROJECT_ROOT, filepath.lstrip('/'))
+        if os.path.exists(full_path):
+            with open(full_path, 'r') as f:
+                content = f.read()
+                lines = len(content.split('\n'))
+                print(f"\n[Reading {filepath} - {lines} lines]\n")
+                return content[:5000]
+        return f"File not found: {filepath}"
+    return "Permission denied (read-only mode)"
+
+def tool_write(filepath, content):
+    """Write to a file (requires workspace-write or full permission)"""
+    if PERMISSION_MODE == "workspace-write" or PERMISSION_MODE == "full":
+        full_path = os.path.join(PROJECT_ROOT, filepath.lstrip('/'))
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, 'w') as f:
+            f.write(content)
+        return f"Written to {filepath}"
+    return "Permission denied (requires workspace-write or full)"
+
+def tool_glob(pattern):
+    """Find files matching pattern"""
+    matches = glob.glob(os.path.join(PROJECT_ROOT, pattern), recursive=True)
+    return '\n'.join([m.replace(PROJECT_ROOT, '') for m in matches[:20]])
+
+def tool_grep(pattern, file_pattern="*.rs"):
+    """Search for pattern in files"""
+    cmd = f"grep -rn '{pattern}' {PROJECT_ROOT} --include='{file_pattern}' 2>/dev/null | head -30"
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    return result.stdout if result.stdout else f"No matches for '{pattern}'"
+
+def tool_git_diff():
+    """Show git diff"""
+    result = subprocess.run(f"cd {PROJECT_ROOT} && git diff --stat", shell=True, capture_output=True, text=True)
+    return result.stdout if result.stdout else "No changes"
+
+def tool_git_status():
+    """Show git status"""
+    result = subprocess.run(f"cd {PROJECT_ROOT} && git status -s", shell=True, capture_output=True, text=True)
+    return result.stdout if result.stdout else "Working tree clean"
+
+def web_search(query):
+    """Simple web search using DuckDuckGo (requires requests)"
+    try:
+        import requests
+        from urllib.parse import quote
+        url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
+        response = requests.get(url, timeout=10)
+        # Extract snippets (simplified)
+        import re
+        snippets = re.findall(r'<a rel="nofollow" class="result__a" href="[^"]+">([^<]+)</a>', response.text)
+        results = []
+        for i, s in enumerate(snippets[:5]):
+            results.append(f"{i+1}. {s}")
+        return '\n'.join(results) if results else "No results"
+    except Exception as e:
+        return f"Web search error: {e}"
+    """
+    return "Web search requires requests library: pip3 install requests"
+
+# ============ COST TRACKING ============
 def track_cost(prompt_tokens, completion_tokens):
     input_cost = (prompt_tokens / 1_000_000) * 0.59
     output_cost = (completion_tokens / 1_000_000) * 0.79
@@ -97,13 +170,12 @@ def show_cost():
     print(f"  Total tokens: {session_data.get('total_tokens', 0)}")
     print(f"  Total cost: ${session_data.get('total_cost', 0):.6f}")
 
+# ============ AI QUERY ============
 def read_project_file(filename):
-    """Read a file from the TX project"""
-    # Try multiple locations
     paths = [
-        f"/home/greg/dev/TX/{filename}",
-        f"/home/greg/dev/TX/docs/{filename}",
-        f"/home/greg/dev/TX/docs/business/{filename}",
+        f"{PROJECT_ROOT}/{filename}",
+        f"{PROJECT_ROOT}/docs/{filename}",
+        f"{PROJECT_ROOT}/docs/business/{filename}",
     ]
     for path in paths:
         if os.path.exists(path):
@@ -115,11 +187,9 @@ def ask_ai(question):
     if not client:
         return "ERROR: GROQ_API_KEY not set"
     
-    # Always try to read VISION.md for questions about PHNX, tokens, vision
     context = ""
     question_lower = question.lower()
     
-    # Keywords that should trigger reading VISION.md
     vision_keywords = ['phnx', 'trust', 'vision', 'token', 'governance', 'reputation']
     if any(kw in question_lower for kw in vision_keywords):
         content = read_project_file("VISION.md")
@@ -127,7 +197,6 @@ def ask_ai(question):
             context += f"\n[VISION.md - PhoenixPME Tokenomics]\n{content[:4000]}\n"
             print("(Reading VISION.md for context...)")
     
-    # Keywords for auction/escrow questions
     auction_keywords = ['auction', 'escrow', 'collateral', 'bid']
     if any(kw in question_lower for kw in auction_keywords):
         content = read_project_file("contracts/auction/src/contract/mod.rs")
@@ -136,19 +205,19 @@ def ask_ai(question):
             print("(Reading auction contract for context...)")
     
     if context:
-        prompt = f"""You are a PhoenixPME blockchain expert. Use ONLY the provided file content to answer.
+        prompt = f"""You are a PhoenixPME blockchain expert. Use ONLY the provided file content.
 
 {context}
 
 Question: {question}
 
-Answer based strictly on the file content above. If the answer is in the files, quote directly. If not, say so."""
+Answer based strictly on the content above."""
     else:
-        prompt = f"Answer this question about PhoenixPME if possible, otherwise answer generally: {question}"
+        prompt = question
     
     try:
         completion = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=CURRENT_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1500
         )
@@ -157,7 +226,6 @@ Answer based strictly on the file content above. If the answer is in the files, 
         response_tokens = len(response) // 4
         track_cost(prompt_tokens, response_tokens)
         
-        # Save to session
         session_data.setdefault('conversations', []).append({
             'question': question,
             'answer': response[:500],
@@ -169,30 +237,63 @@ Answer based strictly on the file content above. If the answer is in the files, 
     except Exception as e:
         return f"API Error: {e}"
 
+# ============ SEARCH ============
 def search_project(term):
     term = term.strip('"\'')
-    cmd = f"grep -rn '{term}' /home/greg/dev/TX --include='*.rs' --include='*.md' 2>/dev/null | head -30"
+    cmd = f"grep -rn '{term}' {PROJECT_ROOT} --include='*.rs' --include='*.md' 2>/dev/null | head -30"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     return result.stdout if result.stdout else f"No results found for: {term}"
 
-# Initialize
+# ============ PERMISSION MODES ============
+def set_permission(mode):
+    global PERMISSION_MODE
+    if mode in ["read-only", "workspace-write", "full"]:
+        PERMISSION_MODE = mode
+        session_data['permission_mode'] = mode
+        session_save()
+        print(f"Permission mode: {mode}")
+        if mode == "read-only":
+            print("  Can only read files")
+        elif mode == "workspace-write":
+            print("  Can read and write files in workspace")
+        else:
+            print("  Full system access - be careful")
+    else:
+        print("Modes: read-only, workspace-write, full")
+
+def show_status():
+    print(f"\nSession: {current_session}")
+    print(f"Messages: {len(session_data.get('conversations', []))}")
+    print(f"Permission: {PERMISSION_MODE}")
+    print(f"Model: {CURRENT_MODEL}")
+    print(f"Cost: ${session_data.get('total_cost', 0):.6f}")
+    print(f"\nProject: {PROJECT_ROOT}")
+    print(f"Groq API: {'Connected' if client else 'Not set'}")
+
+# ============ MAIN ============
 session_new()
 
-print("\n" + "="*50)
+print("\n" + "="*60)
 print("🦞 CLAW - PhoenixPME AI Assistant")
+print("Ported features: Tools, Permissions, Git, Web Search")
 if GROQ_API_KEY:
-    print("FAST MODE (Groq) - 1-2 second responses")
+    print(f"FAST MODE (Groq) - Model: {CURRENT_MODEL}")
 else:
     print("Set GROQ_API_KEY for fast responses")
-print("="*50)
-print("Commands:")
-print("  ask <question>     - Ask about your code")
-print("  search <term>      - Search codebase")
+print("="*60)
+print("\nCOMMANDS:")
+print("  ask <question>          - Ask about your code")
+print("  search <term>           - Search codebase")
+print("  read <file>             - Read a file")
+print("  grep <pattern>          - Search code with grep")
+print("  git status|diff         - Git integration")
+print("  permission <mode>       - Set permission level")
+print("  model <name>            - Switch Groq model")
 print("  session new|list|load|compact|export")
-print("  cost               - Show token/cost usage")
-print("  status|token       - Show system info")
-print("  exit               - Quit")
-print("="*50)
+print("  cost                    - Show token/cost usage")
+print("  status                  - Show system status")
+print("  exit                    - Quit")
+print("="*60)
 
 while True:
     try:
@@ -206,16 +307,33 @@ while True:
             break
         
         elif cmd == "status":
-            print("\nPHOENIXPME")
-            print("  Fee: 1.1% -> PHNX tokens")
-            print("  Collateral: 10% from both parties")
-            print("  Inspection: 48 hours")
-        
-        elif cmd == "token":
-            print("\nTESTUSD on Coreum testnet")
+            show_status()
         
         elif cmd == "cost":
             show_cost()
+        
+        elif cmd.startswith("permission "):
+            set_permission(cmd.split()[1])
+        
+        elif cmd.startswith("model "):
+            new_model = cmd.split()[1]
+            CURRENT_MODEL = new_model
+            print(f"Model switched to: {CURRENT_MODEL}")
+        
+        elif cmd.startswith("read "):
+            print(tool_read(cmd[5:]))
+        
+        elif cmd.startswith("grep "):
+            parts = cmd.split()
+            pattern = parts[1] if len(parts) > 1 else ""
+            file_pattern = parts[2] if len(parts) > 2 else "*.rs"
+            print(tool_grep(pattern, file_pattern))
+        
+        elif cmd == "git status":
+            print(tool_git_status())
+        
+        elif cmd == "git diff":
+            print(tool_git_diff())
         
         elif cmd.startswith("session "):
             parts = cmd.split()
@@ -247,7 +365,7 @@ while True:
             print(search_project(term))
         
         else:
-            print("Unknown command. Try: ask, search, session, cost, status, token, exit")
+            print("Unknown command. Try: ask, search, read, grep, git, permission, model, session, cost, status, exit")
             
     except KeyboardInterrupt:
         print("\nGoodbye!")
