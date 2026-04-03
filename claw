@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""
+🦞 TX CLAW - AI Assistant for TX Blockchain & PhoenixPME
+Indexes: TX (PhoenixPME code) + TXdocumentation (TX blockchain docs)
+"""
+
+import requests
+import os
+import sys
+import json
+from pathlib import Path
+from datetime import datetime
+
+# ============ CONFIGURATION ============
+OLLAMA_URL = "http://localhost:11434/api/generate"
+PROJECT_PATHS = [
+    "/home/greg/dev/TX",           # PhoenixPME code
+    "/home/greg/dev/TXdocumentation" # TX blockchain docs
+]
+SESSION_FILE = Path.home() / ".claw_session.json"
+INDEX_FILE = Path.home() / ".claw_index.json"
+
+# ============ LOAD INDEX ============
+def load_index():
+    if INDEX_FILE.exists():
+        with open(INDEX_FILE, 'r') as f:
+            return json.load(f)
+    return {"files": {}, "docs": {}, "stats": {}}
+
+def save_index(index):
+    with open(INDEX_FILE, 'w') as f:
+        json.dump(index, f, indent=2)
+
+# ============ SEARCH FUNCTIONS ============
+def search_docs(query):
+    """Search through TX blockchain documentation"""
+    index = load_index()
+    results = []
+    
+    print(f"🔍 Searching TX documentation for '{query}'...")
+    
+    for doc_path, info in index.get("docs", {}).items():
+        try:
+            with open(doc_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+                if query.lower() in content.lower():
+                    # Find context lines
+                    lines = content.split('\n')
+                    for i, line in enumerate(lines):
+                        if query.lower() in line.lower():
+                            start = max(0, i-2)
+                            end = min(len(lines), i+3)
+                            context = '\n'.join(lines[start:end])
+                            results.append({
+                                "file": doc_path,
+                                "line": i+1,
+                                "context": context[:400]
+                            })
+                            if len(results) >= 10:
+                                break
+                if len(results) >= 10:
+                    break
+        except:
+            pass
+    
+    return results
+
+def search_code(query):
+    """Search through PhoenixPME code"""
+    index = load_index()
+    results = []
+    
+    for file_path, info in index.get("files", {}).items():
+        if query.lower() in file_path.lower():
+            results.append(f"📁 {file_path}")
+            if len(results) >= 20:
+                break
+    
+    return results
+
+# ============ AI QUERY ============
+def ask(prompt, context=None):
+    full_prompt = prompt
+    if context:
+        full_prompt = f"{context}\n\n{prompt}"
+    
+    try:
+        r = requests.post(OLLAMA_URL,
+            json={"model": "llama3.2:3b", "prompt": full_prompt, "stream": False},
+            timeout=180)
+        return r.json()["response"] if r.status_code == 200 else "Error"
+    except Exception as e:
+        return f"Error: {e}"
+
+# ============ MAIN ============
+def main():
+    index = load_index()
+    
+    print("\n" + "="*60)
+    print("🦞 TX CLAW - TX Blockchain + PhoenixPME Assistant")
+    print("="*60)
+    print(f"📁 PhoenixPME Code: {len(index.get('files', {}))} files")
+    print(f"📚 TX Blockchain Docs: {len(index.get('docs', {}))} files")
+    print("="*60)
+    print("\nCOMMANDS:")
+    print("  ask <question>     - Ask about TX blockchain or PhoenixPME")
+    print("  docsearch <term>   - Search TX documentation")
+    print("  codesearch <term>  - Search PhoenixPME code")
+    print("  read <file>        - Read any file")
+    print("  grep <pattern>     - Grep through code/docs")
+    print("  analyze <file>     - AI analyze a file")
+    print("  prices             - Metal prices")
+    print("  status             - System status")
+    print("  chat               - Interactive chat")
+    print("  help               - This menu")
+    print("  exit               - Quit")
+    print("="*60)
+    
+    while True:
+        try:
+            cmd = input("\n🦞 ").strip()
+            if not cmd:
+                continue
+            
+            if cmd == "exit":
+                break
+            elif cmd == "help":
+                continue
+            
+            # PhoenixPME commands
+            elif cmd == "prices":
+                print("\n🏛️ METAL PRICES")
+                print("  Gold: $4,676 | Silver: $72.90")
+                print("  Platinum: $1,980 | Palladium: $1,490")
+            elif cmd == "status":
+                print("\n🏛️ PHOENIXPME STATUS")
+                print("  Fee: 1.1% | Collateral: 10%")
+                print("  Inspection: 48h | PHNX: 1 per $1")
+            
+            # Documentation search (TX blockchain)
+            elif cmd.startswith("docsearch "):
+                term = cmd[10:]
+                results = search_docs(term)
+                if results:
+                    print(f"\n📚 Found {len(results)} results in TX documentation:\n")
+                    for r in results[:8]:
+                        # Clean up the path for display
+                        display_path = r["file"].replace("/home/greg/dev/TXdocumentation/", "")
+                        print(f"📄 {display_path} (line {r['line']}):")
+                        print(f"   {r['context']}\n")
+                else:
+                    print(f"\n❌ No results found for '{term}' in TX documentation")
+            
+            # Code search (PhoenixPME)
+            elif cmd.startswith("codesearch "):
+                term = cmd[11:]
+                results = search_code(term)
+                if results:
+                    print(f"\n📁 Found {len(results)} results in PhoenixPME code:\n")
+                    for r in results[:15]:
+                        display_path = r.replace("/home/greg/dev/TX/", "")
+                        print(f"   {display_path}")
+                else:
+                    print(f"\n❌ No results found for '{term}' in PhoenixPME code")
+            
+            # Read file
+            elif cmd.startswith("read "):
+                path = os.path.expanduser(cmd[5:])
+                if os.path.exists(path):
+                    content = open(path, 'r', encoding='utf-8', errors='ignore').read()
+                    print(content[:3000])
+                    if len(content) > 3000:
+                        print(f"\n... (truncated, {len(content)} total chars)")
+                else:
+                    print(f"Not found: {path}")
+            
+            # Grep
+            elif cmd.startswith("grep "):
+                pattern = cmd[5:]
+                for path in PROJECT_PATHS:
+                    if Path(path).exists():
+                        os.system(f"grep -rn --color=always '{pattern}' {path} 2>/dev/null | head -30")
+            
+            # Analyze file with AI
+            elif cmd.startswith("analyze "):
+                path = os.path.expanduser(cmd[8:])
+                if os.path.exists(path):
+                    content = open(path, 'r', encoding='utf-8', errors='ignore').read()[:3000]
+                    print("🤔 AI analyzing...")
+                    response = ask(f"Analyze and explain this file:\n\n{content}")
+                    print(f"\n📖 {response[:800]}")
+                else:
+                    print(f"Not found: {path}")
+            
+            # Ask AI (with context about TX and PhoenixPME)
+            elif cmd.startswith("ask "):
+                question = cmd[4:]
+                # Add context about what TX and PhoenixPME are
+                context = """You are an assistant for TX blockchain and PhoenixPME.
+- TX is a blockchain project with smart contracts
+- PhoenixPME is a precious metals exchange built on TX
+- The TXdocumentation contains blockchain docs
+- The TX directory contains PhoenixPME smart contract code"""
+                response = ask(question, context)
+                print(f"\n🤖 {response[:800]}")
+            
+            # Chat mode
+            elif cmd == "chat":
+                print("\n💬 Chat mode (type 'exit' to return)")
+                print("Ask me about TX blockchain or PhoenixPME!\n")
+                while True:
+                    q = input("You: ").strip()
+                    if q.lower() == "exit":
+                        break
+                    if q:
+                        print("🤔 Thinking...")
+                        response = ask(q)
+                        print(f"\n🤖 {response[:500]}\n")
+            
+            # Shell command
+            elif cmd.startswith("shell "):
+                os.system(cmd[6:])
+            
+            else:
+                print("Commands: docsearch <term> | codesearch <term> | ask <question> | read <file> | grep <pattern> | analyze <file> | prices | status | chat | help | exit")
+                
+        except KeyboardInterrupt:
+            print("\nGoodbye!")
+            break
+        except Exception as e:
+            print(f"Error: {e}")
+
+if __name__ == "__main__":
+    main()
