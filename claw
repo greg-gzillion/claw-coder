@@ -1,178 +1,130 @@
 #!/usr/bin/env python3
 """
-🦞 DUAL CLAW - Groq API (fast) + Ollama (fallback)
+🦞 CLAW - PhoenixPME AI Assistant
 """
 
-import requests
 import os
 import subprocess
-import time
+from groq import Groq
 
-# Try Groq first
-GROQ_AVAILABLE = False
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-if GROQ_API_KEY:
+def ask_with_context(question):
+    """Ask AI with relevant code context"""
+    if not client:
+        return "Set GROQ_API_KEY for fast responses"
+    
+    # Always include escrow.rs for collateral questions
+    context_files = []
+    
+    # Find relevant files based on question keywords
+    keywords = question.lower().split()
+    for kw in keywords:
+        if kw in ['collateral', 'escrow', 'dual', 'lock']:
+            if os.path.exists('/home/greg/dev/TX/escrow.rs'):
+                context_files.append('/home/greg/dev/TX/escrow.rs')
+            if os.path.exists('/home/greg/dev/TX/tests/generated_tests.rs'):
+                context_files.append('/home/greg/dev/TX/tests/generated_tests.rs')
+            break
+    
+    # If no specific files found, search for relevant ones
+    if not context_files:
+        for kw in keywords[:2]:
+            result = subprocess.run(f"grep -l '{kw}' /home/greg/dev/TX/*.rs 2>/dev/null | head -1",
+                                   shell=True, capture_output=True, text=True)
+            if result.stdout.strip():
+                context_files.append(result.stdout.strip())
+    
+    # Build context from files
+    context = ""
+    for filepath in context_files[:2]:
+        if filepath and os.path.exists(filepath):
+            with open(filepath, 'r') as f:
+                content = f.read()
+                # Get relevant sections (around keywords)
+                lines = content.split('\n')
+                relevant_lines = []
+                for i, line in enumerate(lines):
+                    for kw in keywords[:2]:
+                        if kw in line.lower():
+                            start = max(0, i-5)
+                            end = min(len(lines), i+6)
+                            relevant_lines.extend(lines[start:end])
+                            break
+                    if len(relevant_lines) > 50:
+                        break
+                
+                if relevant_lines:
+                    context += f"\n=== {os.path.basename(filepath)} ===\n"
+                    context += '\n'.join(relevant_lines[:60])
+                    context += "\n"
+    
+    # If no context found, provide basic info
+    if not context:
+        context = "PhoenixPME escrow system with 10% collateral from both parties."
+    
+    prompt = f"""You are a PhoenixPME blockchain expert. Use this code context:
+
+{context}
+
+Question: {question}
+
+Answer based on the actual code above. Be specific - mention actual values like 10%, 1.1%, 48 hours, and reference the actual functions seen in the code."""
+    
     try:
-        from groq import Groq
-        groq_client = Groq(api_key=GROQ_API_KEY)
-        GROQ_AVAILABLE = True
-        print("✅ Groq API available (FAST mode)")
-    except:
-        pass
-
-if not GROQ_AVAILABLE:
-    print("⚠️ Groq not configured - using Ollama (SLOW mode)")
-    print("   Get free API key: https://console.groq.com")
-    print("   Then: export GROQ_API_KEY='your-key'")
-
-# Ollama config
-OLLAMA_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL = "llama3.2:3b"
-
-def ask_groq(prompt):
-    """Lightning fast - 0.5-2 seconds"""
-    try:
-        completion = groq_client.chat.completions.create(
+        completion = client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.5,
-            max_tokens=2000
+            max_tokens=1500
         )
-        return completion.choices[0].message.content, "Groq (fast)"
+        return completion.choices[0].message.content
     except Exception as e:
-        return f"Groq error: {e}", None
+        return f"API Error: {e}"
 
-def ask_ollama(prompt):
-    """Slow fallback - 2-3 minutes"""
-    try:
-        start = time.time()
-        r = requests.post(OLLAMA_URL,
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=180)
-        elapsed = time.time() - start
-        if r.status_code == 200:
-            return r.json()["response"], f"Ollama ({elapsed:.0f}s)"
-        return f"Ollama error: {r.status_code}", None
-    except Exception as e:
-        return f"Ollama error: {e}", None
+def search_project(term):
+    """Search TX project for term"""
+    cmd = f"grep -rn '{term}' /home/greg/dev/TX --include='*.rs' --include='*.md' 2>/dev/null | head -25"
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    return result.stdout if result.stdout else f"No results found for '{term}'"
 
-def ask_ai(prompt):
-    """Try Groq first, fallback to Ollama"""
-    if GROQ_AVAILABLE:
-        response, source = ask_groq(prompt)
-        if source:
-            print(f"⚡ [{source}]")
-            return response
-    
-    print("🐌 [Ollama fallback - this will take 2-3 minutes]")
-    response, source = ask_ollama(prompt)
-    if source:
-        print(f"🐌 [{source}]")
-        return response
-    return "No AI backend available"
-
-def quick_search(directory, pattern, max_results=15):
-    """Fast grep search"""
-    try:
-        result = subprocess.run(
-            f"timeout 10 grep -rn '{pattern}' {directory} 2>/dev/null | head -{max_results}",
-            shell=True, capture_output=True, text=True, timeout=12
-        )
-        return result.stdout if result.stdout else "No results found"
-    except:
-        return "Search timeout"
-
-print("\n" + "="*60)
-print("🦞 DUAL CLAW - Groq (fast) + Ollama (fallback)")
-print("="*60)
-if GROQ_AVAILABLE:
-    print("🚀 PRIMARY: Groq API - 0.5-2 second responses")
-    print("🐌 FALLBACK: Ollama - 2-3 minutes (offline mode)")
+print("\n" + "="*50)
+print("🦞 CLAW - PhoenixPME AI Assistant")
+if GROQ_API_KEY:
+    print("🚀 FAST MODE (Groq) - 1-2 second responses")
 else:
-    print("⚠️  Groq not configured - using Ollama only")
-    print("   Get API key: export GROQ_API_KEY='your-key'")
-print("="*60)
-print("\nCommands: ask | docsearch | codesearch | analyze | chat | prices | status | mode | exit")
-print("="*60)
+    print("⚠️  Set GROQ_API_KEY for fast responses")
+print("="*50)
+print("Commands: ask | search | status | token | exit")
+print("="*50)
 
 while True:
     try:
         cmd = input("\n🦞 ").strip()
         if not cmd:
             continue
-        
         if cmd == "exit":
             break
-        
-        elif cmd == "prices":
-            print("\n🏛️ METAL PRICES")
-            print("  Gold: $4,676 | Silver: $72.90")
-            print("  Platinum: $1,980 | Palladium: $1,490")
-        
         elif cmd == "status":
-            print("\n🏛️ PHOENIXPME STATUS")
-            print("  Fee: 1.1% | Collateral: 10%")
-            print("  Inspection: 48h | PHNX: 1 per $1")
-            if GROQ_AVAILABLE:
-                print("  🤖 AI: Groq (fast mode)")
-            else:
-                print("  🤖 AI: Ollama (slow mode)")
-        
-        elif cmd == "mode":
-            if GROQ_AVAILABLE:
-                print("Current: Groq API (fast)")
-                print("To use Ollama: unset GROQ_API_KEY")
-            else:
-                print("Current: Ollama (slow)")
-                print("To use Groq: export GROQ_API_KEY='your-key'")
-        
+            print("\n🏛️ PHOENIXPME")
+            print("  Fee: 1.1%")
+            print("  Collateral: 10% (both parties)")
+            print("  Inspection: 48 hours")
+            print("  PHNX: 1 per $1 TESTUSD fees")
+        elif cmd == "token":
+            print("\n🪙 TESTUSD Token")
+            print("  Network: Coreum testnet")
+            print("  Denom: utestusd-testcore1tymxlev27p5rhxd36g4j3a82c7uucjjz4xuzc6")
+            print("  Decimals: 6")
         elif cmd.startswith("ask "):
-            question = cmd[4:]
-            print("\n🤔 Thinking...")
-            response = ask_ai(question)
-            print(f"\n{response}\n")
-        
-        elif cmd.startswith("docsearch "):
-            term = cmd[10:]
-            print(f"\n🔍 Searching TX documentation...")
-            print(quick_search("/home/greg/dev/TXdocumentation", term))
-        
-        elif cmd.startswith("codesearch "):
-            term = cmd[11:]
-            print(f"\n🔍 Searching TX code...")
-            print(quick_search("/home/greg/dev/TX", term))
-        
-        elif cmd.startswith("analyze "):
-            path = os.path.expanduser(cmd[8:])
-            if os.path.exists(path):
-                with open(path, 'r') as f:
-                    code = f.read()[:2000]
-                print("\n🤔 Analyzing code...")
-                response = ask_ai(f"Explain this Rust/CosmWasm code:\n\n{code}")
-                print(f"\n{response}\n")
-            else:
-                print(f"Not found: {path}")
-        
-        elif cmd == "chat":
-            print("\n💬 Chat mode (type 'exit' to return)")
-            while True:
-                q = input("You: ").strip()
-                if q.lower() == "exit":
-                    break
-                if q:
-                    print("🤔...")
-                    response = ask_ai(q)
-                    print(f"\n{response}\n")
-        
+            print("🤔 Thinking...")
+            answer = ask_with_context(cmd[4:])
+            print(f"\n{answer}\n")
+        elif cmd.startswith("search "):
+            print(search_project(cmd[7:]))
         else:
-            print("Commands: ask | docsearch | codesearch | analyze | chat | prices | status | mode | exit")
-            
+            print("Commands: ask <question> | search <term> | status | token | exit")
     except KeyboardInterrupt:
-        print("\nGoodbye!")
         break
-    except Exception as e:
-        print(f"Error: {e}")
 
-if __name__ == "__main__":
-    main()
+print("\nGoodbye!")
