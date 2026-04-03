@@ -29,3 +29,10 @@ echo ""
 echo "To run:"
 echo "  ./run_all_agents.sh     # Run all agents"
 echo "  ollama serve            # Start Ollama (if not running)"
+
+# Optional model setup
+echo ""
+read -p "Setup AI models? (y/n): " setup_models
+if [[ $setup_models == "y" ]]; then
+    ./setup_models.sh
+fi
