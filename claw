@@ -5,58 +5,146 @@
 
 import os
 import subprocess
+import json
+import glob
+from datetime import datetime
 from groq import Groq
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-def read_file(filepath):
-    """Read a file and return its contents"""
-    full_path = f"/home/greg/dev/TX/{filepath}"
-    if os.path.exists(full_path):
-        with open(full_path, 'r') as f:
-            return f.read()
+# Session management
+SESSION_DIR = os.path.expanduser("~/.claw_sessions")
+os.makedirs(SESSION_DIR, exist_ok=True)
+current_session = None
+session_data = {"conversations": [], "created": None, "total_cost": 0, "total_tokens": 0}
+
+def session_new(name=None):
+    global current_session, session_data
+    if not name:
+        name = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    current_session = name
+    session_data = {
+        "id": name,
+        "created": datetime.now().isoformat(),
+        "conversations": [],
+        "total_cost": 0,
+        "total_tokens": 0
+    }
+    session_save()
+    print(f"New session: {name}")
+
+def session_save():
+    if current_session:
+        path = os.path.join(SESSION_DIR, f"{current_session}.json")
+        with open(path, 'w') as f:
+            json.dump(session_data, f, indent=2)
+
+def session_load(name):
+    global current_session, session_data
+    path = os.path.join(SESSION_DIR, f"{name}.json")
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            session_data = json.load(f)
+        current_session = name
+        print(f"Loaded session: {name} ({len(session_data.get('conversations', []))} messages)")
+        return True
+    print(f"Session not found: {name}")
+    return False
+
+def session_list():
+    sessions = glob.glob(os.path.join(SESSION_DIR, "*.json"))
+    if not sessions:
+        print("No saved sessions")
+        return
+    print("\nSaved sessions:")
+    for s in sessions:
+        name = os.path.basename(s).replace('.json', '')
+        with open(s, 'r') as f:
+            data = json.load(f)
+            print(f"  {name} - {len(data.get('conversations', []))} messages")
+
+def session_compact():
+    if current_session:
+        convs = session_data.get('conversations', [])
+        if len(convs) > 20:
+            old = len(convs)
+            session_data['conversations'] = convs[-20:]
+            session_save()
+            print(f"Compacted: {old} -> 20 messages")
+        else:
+            print(f"Only {len(convs)} messages, no compaction needed")
+
+def session_export(filename=None):
+    if not filename:
+        filename = f"export_{current_session}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(filename, 'w') as f:
+        json.dump(session_data, f, indent=2)
+    print(f"Exported to: {filename}")
+
+def track_cost(prompt_tokens, completion_tokens):
+    input_cost = (prompt_tokens / 1_000_000) * 0.59
+    output_cost = (completion_tokens / 1_000_000) * 0.79
+    total = input_cost + output_cost
+    session_data['total_cost'] = session_data.get('total_cost', 0) + total
+    session_data['total_tokens'] = session_data.get('total_tokens', 0) + prompt_tokens + completion_tokens
+    session_save()
+    return total
+
+def show_cost():
+    print(f"\nSession: {current_session}")
+    print(f"  Messages: {len(session_data.get('conversations', []))}")
+    print(f"  Total tokens: {session_data.get('total_tokens', 0)}")
+    print(f"  Total cost: ${session_data.get('total_cost', 0):.6f}")
+
+def read_project_file(filename):
+    """Read a file from the TX project"""
+    # Try multiple locations
+    paths = [
+        f"/home/greg/dev/TX/{filename}",
+        f"/home/greg/dev/TX/docs/{filename}",
+        f"/home/greg/dev/TX/docs/business/{filename}",
+    ]
+    for path in paths:
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                return f.read()
     return None
 
 def ask_ai(question):
     if not client:
-        return "ERROR: GROQ_API_KEY not set. Run: export GROQ_API_KEY='your-key'"
+        return "ERROR: GROQ_API_KEY not set"
     
-    # Check if question asks about a specific file
+    # Always try to read VISION.md for questions about PHNX, tokens, vision
     context = ""
-    file_patterns = {
-        'VISION.md': ['vision', 'VISION.md'],
-        'README.md': ['readme', 'README'],
-        'CLAW.md': ['claw', 'CLAW'],
-        'escrow.rs': ['escrow'],
-    }
+    question_lower = question.lower()
     
-    for filename, keywords in file_patterns.items():
-        if any(kw in question.lower() for kw in keywords):
-            content = read_file(filename)
-            if content:
-                context += f"\n=== {filename} ===\n{content[:3000]}\n"
-                break
+    # Keywords that should trigger reading VISION.md
+    vision_keywords = ['phnx', 'trust', 'vision', 'token', 'governance', 'reputation']
+    if any(kw in question_lower for kw in vision_keywords):
+        content = read_project_file("VISION.md")
+        if content:
+            context += f"\n[VISION.md - PhoenixPME Tokenomics]\n{content[:4000]}\n"
+            print("(Reading VISION.md for context...)")
     
-    # Also try to extract filename from question
-    words = question.split()
-    for word in words:
-        if word.endswith('.md') or word.endswith('.rs'):
-            content = read_file(word)
-            if content:
-                context += f"\n=== {word} ===\n{content[:3000]}\n"
-                break
+    # Keywords for auction/escrow questions
+    auction_keywords = ['auction', 'escrow', 'collateral', 'bid']
+    if any(kw in question_lower for kw in auction_keywords):
+        content = read_project_file("contracts/auction/src/contract/mod.rs")
+        if content:
+            context += f"\n[Auction Contract]\n{content[:2000]}\n"
+            print("(Reading auction contract for context...)")
     
     if context:
-        prompt = f"""You are a PhoenixPME blockchain expert. Here is the actual file content:
+        prompt = f"""You are a PhoenixPME blockchain expert. Use ONLY the provided file content to answer.
 
 {context}
 
 Question: {question}
 
-Answer based ONLY on the file content above. Be specific and quote from the file."""
+Answer based strictly on the file content above. If the answer is in the files, quote directly. If not, say so."""
     else:
-        prompt = question
+        prompt = f"Answer this question about PhoenixPME if possible, otherwise answer generally: {question}"
     
     try:
         completion = client.chat.completions.create(
@@ -64,28 +152,46 @@ Answer based ONLY on the file content above. Be specific and quote from the file
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1500
         )
-        return completion.choices[0].message.content
+        response = completion.choices[0].message.content
+        prompt_tokens = len(prompt) // 4
+        response_tokens = len(response) // 4
+        track_cost(prompt_tokens, response_tokens)
+        
+        # Save to session
+        session_data.setdefault('conversations', []).append({
+            'question': question,
+            'answer': response[:500],
+            'timestamp': datetime.now().isoformat()
+        })
+        session_save()
+        
+        return response
     except Exception as e:
         return f"API Error: {e}"
 
 def search_project(term):
     term = term.strip('"\'')
-    cmd = f"grep -rn '{term}' /home/greg/dev/TX --include='*.rs' --include='*.md' --include='*.txt' 2>/dev/null | head -30"
+    cmd = f"grep -rn '{term}' /home/greg/dev/TX --include='*.rs' --include='*.md' 2>/dev/null | head -30"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    
-    if result.stdout:
-        return result.stdout
-    else:
-        return f"No results found for: {term}"
+    return result.stdout if result.stdout else f"No results found for: {term}"
+
+# Initialize
+session_new()
 
 print("\n" + "="*50)
 print("🦞 CLAW - PhoenixPME AI Assistant")
 if GROQ_API_KEY:
     print("FAST MODE (Groq) - 1-2 second responses")
 else:
-    print("SLOW MODE - Set GROQ_API_KEY for fast responses")
+    print("Set GROQ_API_KEY for fast responses")
 print("="*50)
-print("Commands: ask | search | status | token | exit")
+print("Commands:")
+print("  ask <question>     - Ask about your code")
+print("  search <term>      - Search codebase")
+print("  session new|list|load|compact|export")
+print("  cost               - Show token/cost usage")
+print("  status|token       - Show system info")
+print("  exit               - Quit")
 print("="*50)
 
 while True:
@@ -95,30 +201,57 @@ while True:
             continue
         
         if cmd == "exit":
+            session_save()
+            print(f"Session saved: {current_session}")
             break
+        
         elif cmd == "status":
             print("\nPHOENIXPME")
             print("  Fee: 1.1% -> PHNX tokens")
             print("  Collateral: 10% from both parties")
             print("  Inspection: 48 hours")
-            print("  Token: TESTUSD on Coreum testnet")
+        
         elif cmd == "token":
-            print("\nTESTUSD Token")
-            print("  Network: Coreum testnet")
-            print("  Decimals: 6")
+            print("\nTESTUSD on Coreum testnet")
+        
+        elif cmd == "cost":
+            show_cost()
+        
+        elif cmd.startswith("session "):
+            parts = cmd.split()
+            if len(parts) < 2:
+                print("session new|list|load <name>|compact|export")
+            elif parts[1] == "new":
+                name = parts[2] if len(parts) > 2 else None
+                session_new(name)
+            elif parts[1] == "list":
+                session_list()
+            elif parts[1] == "load" and len(parts) > 2:
+                session_load(parts[2])
+            elif parts[1] == "compact":
+                session_compact()
+            elif parts[1] == "export":
+                filename = parts[2] if len(parts) > 2 else None
+                session_export(filename)
+            else:
+                print("Unknown session command")
+        
         elif cmd.startswith("ask "):
             question = cmd[4:]
             print("Thinking...")
             answer = ask_ai(question)
             print(f"\n{answer}\n")
+        
         elif cmd.startswith("search "):
             term = cmd[7:]
             print(search_project(term))
+        
         else:
-            print("Commands: ask <question> | search <term> | status | token | exit")
+            print("Unknown command. Try: ask, search, session, cost, status, token, exit")
             
     except KeyboardInterrupt:
         print("\nGoodbye!")
+        session_save()
         break
     except Exception as e:
         print(f"Error: {e}")
